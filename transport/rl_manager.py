@@ -102,6 +102,8 @@ class RLManager:
 
         if ftype == "shot":
             self._handle_shot_frame(frame)
+        elif ftype == "request_rpm":
+            self._handle_rpm_request(frame)
         elif ftype in {"snapshot", "heartbeat"}:
             event = {
                 "direction": "inbound",
@@ -168,6 +170,44 @@ class RLManager:
                 "payload": dict(shot),
             }
         )
+
+    def _handle_rpm_request(self, frame: Dict[str, Any]) -> None:
+        """
+        Handle a request from the robot for a predictive RPM.
+        """
+        payload = frame.get("payload") or frame
+        distance_in = self._coerce_float(payload.get("distance_in"))
+        v_batt = self._coerce_float(payload.get("v_batt_load") or payload.get("battery_v"))
+        
+        if distance_in is None or v_batt is None:
+            logger.warning("Ignoring RPM request with missing data: %s", payload)
+            return
+
+        # Predict
+        predicted_rpm = 0.0
+        if self.model:
+            base = self.model.predict(distance_in, v_batt)
+            delta = self.model.delta(distance_in, v_batt)
+            predicted_rpm = base + delta
+        else:
+            logger.warning("No RPM model loaded, cannot predict.")
+            return
+
+        # Send command back
+        if self.send_cmd:
+            cmd = {
+                "cmd": "set_rpm",
+                "rpm": predicted_rpm,
+                "distance_in": distance_in,
+                "offset_rpm": (self.model.delta(distance_in, v_batt) if self.model else 0.0)
+            }
+            self.send_cmd(cmd)
+            
+            self._emit_event({
+                "direction": "outbound",
+                "type": "rpm_prediction",
+                "payload": cmd
+            })
 
     def _load_config_and_model(self) -> None:
         try:

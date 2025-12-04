@@ -227,6 +227,10 @@ class DevControllerApp(tk.Tk):
         self.nb = ttk.Notebook(notebook_frame)
         self.nb.pack(fill=tk.BOTH, expand=True)
 
+        self.home_tab = ttk.Frame(self.nb, padding=16, style="App.TFrame")
+        self.nb.add(self.home_tab, text="HOME")
+        self._build_home_tab(self.home_tab)
+
         self.telemetry_tab = ttk.Frame(self.nb, padding=16, style="App.TFrame")
         self.nb.add(self.telemetry_tab, text="TELEMETRY")
         self._build_telemetry_tab(self.telemetry_tab)
@@ -250,6 +254,69 @@ class DevControllerApp(tk.Tk):
         # Status Bar (Bottom)
         status_bar = ttk.Label(self, textvariable=self.status_bar_var, anchor="w", style="StatusHeader.TLabel", background="#007acc", foreground="white", padding=(8, 2))
         status_bar.grid(row=1, column=0, sticky="ew")
+
+    def _build_home_tab(self, frame: ttk.Frame) -> None:
+        frame.columnconfigure(0, weight=1)
+        frame.columnconfigure(1, weight=1)
+        frame.rowconfigure(0, weight=1)
+
+        # Mini-Map
+        map_frame = ttk.Frame(frame, style="App.TFrame", padding=(0, 0, 12, 0))
+        map_frame.grid(row=0, column=0, sticky="nsew")
+        ttk.Label(map_frame, text="Field Map", style="Title.TLabel").pack(anchor="w", pady=(0, 6))
+        
+        self.map_canvas = tk.Canvas(map_frame, background="#252526", highlightthickness=0)
+        self.map_canvas.pack(fill=tk.BOTH, expand=True)
+        self.map_canvas.bind("<Button-1>", self._on_map_click)
+        
+        # Graph
+        graph_frame = ttk.Frame(frame, style="App.TFrame")
+        graph_frame.grid(row=0, column=1, sticky="nsew")
+        ttk.Label(graph_frame, text="Live Metrics", style="Title.TLabel").pack(anchor="w", pady=(0, 6))
+        
+        self.graph_canvas = tk.Canvas(graph_frame, background="#252526", highlightthickness=0)
+        self.graph_canvas.pack(fill=tk.BOTH, expand=True)
+        
+        # Virtual Controller (Bottom of Home)
+        ctrl_frame = ttk.Frame(frame, style="App.TFrame", padding=(0, 12, 0, 0))
+        ctrl_frame.grid(row=1, column=0, columnspan=2, sticky="ew")
+        ttk.Label(ctrl_frame, text="Virtual Controller", style="Title.TLabel").pack(anchor="w", pady=(0, 6))
+        
+        btn_row = ttk.Frame(ctrl_frame, style="App.TFrame")
+        btn_row.pack(anchor="w")
+        
+        # WASD-style buttons
+        ttk.Button(btn_row, text="FWD", command=lambda: self._send_drive(0.5, 0, 0)).pack(side=tk.LEFT)
+        ttk.Button(btn_row, text="LEFT", command=lambda: self._send_drive(0, -0.5, 0)).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_row, text="STOP", command=lambda: self._send_drive(0, 0, 0)).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_row, text="RIGHT", command=lambda: self._send_drive(0, 0.5, 0)).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_row, text="BACK", command=lambda: self._send_drive(-0.5, 0, 0)).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_row, text="TURN L", command=lambda: self._send_drive(0, 0, 0.5)).pack(side=tk.LEFT, padx=12)
+        ttk.Button(btn_row, text="TURN R", command=lambda: self._send_drive(0, 0, -0.5)).pack(side=tk.LEFT, padx=4)
+
+    def _send_drive(self, y: float, x: float, turn: float) -> None:
+        cmd = {"cmd": "drive", "x": x, "y": y, "turn": turn}
+        if x == 0 and y == 0 and turn == 0:
+            cmd = {"cmd": "stop"}
+        self.api.send_cmd(json.dumps(cmd))
+        
+    def _on_map_click(self, event: tk.Event) -> None:
+        # Simple waypoint sender
+        # Map 0-width to -72 to 72 inches
+        w = self.map_canvas.winfo_width()
+        h = self.map_canvas.winfo_height()
+        if w == 0 or h == 0: return
+        
+        # Field is 144x144 inches. Center is 0,0.
+        # Canvas x: 0 -> -72, w -> 72
+        # Canvas y: 0 -> 72, h -> -72 (Y up)
+        
+        field_x = (event.x / w) * 144 - 72
+        field_y = 72 - (event.y / h) * 144
+        
+        cmd = {"cmd": "goto", "x": field_x, "y": field_y}
+        self.api.send_cmd(json.dumps(cmd))
+        self.status_bar_var.set(f"Sent Waypoint: {field_x:.1f}, {field_y:.1f}")
 
     def _build_status_panel(self, parent: ttk.Panedwindow) -> ttk.Frame:
         frame = ttk.Frame(parent, padding=16, style="Sidebar.TFrame")
